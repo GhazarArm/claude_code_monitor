@@ -124,7 +124,8 @@ info "Installing scripts to $CLAUDE_DIR ..."
 mkdir -p "$CLAUDE_DIR"
 
 copy_file() {
-    local name="$1" dest="$CLAUDE_DIR/$name"
+    local name="$1"
+    local dest="$CLAUDE_DIR/$name"
     if [[ "$USE_LOCAL" == "true" ]]; then
         cp "$SCRIPT_DIR/scripts/$name" "$dest"
     else
