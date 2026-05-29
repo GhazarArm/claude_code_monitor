@@ -65,7 +65,7 @@ if [[ "$MODE" == "relay" ]]; then
     if [[ -z "$RELAY_URL" ]]; then
         DEFAULT_RELAY="https://claude-monitor-production.up.railway.app"
         echo ""
-        echo "  1. Open Telegram → search @ClaudeCodeMonitorBot → send /start"
+        echo "  1. Open Telegram → search @Ghazar_claude_code_bot → send /start"
         echo "  2. Copy the Chat ID, Token, and Relay URL from the reply"
         echo ""
         read -r -p "  Relay URL [${DEFAULT_RELAY}]: " RELAY_URL

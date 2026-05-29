@@ -33,7 +33,7 @@ Claude: "I'll run rm -rf ./build"
 
 ## Quick start for users
 
-**1.** Message the bot on Telegram: [@YourBotName](https://t.me/) → send `/start`
+**1.** Message the bot on Telegram: [@Ghazar_claude_code_bot](https://t.me/Ghazar_claude_code_bot) → send `/start`
 
 You'll get your personal credentials:
 ```
