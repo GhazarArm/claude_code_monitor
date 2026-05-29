@@ -1,8 +1,7 @@
 [build]
 builder = "nixpacks"
-buildCommand = "pip install -r relay/requirements.txt"
 
 [deploy]
-startCommand = "cd relay && uvicorn main:app --host 0.0.0.0 --port $PORT"
+startCommand = "python3 -m uvicorn relay.main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 restartPolicyType = "on_failure"
