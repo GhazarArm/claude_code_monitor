@@ -232,15 +232,17 @@ async def health():
 
 @app.on_event("startup")
 async def on_startup():
-    if BOT_TOKEN and PUBLIC_URL:
+    # Use configured URL or fall back to the known Railway URL
+    webhook_base = PUBLIC_URL or "https://claudecodemonitor-production.up.railway.app"
+    if BOT_TOKEN:
         result = tg("setWebhook", {
-            "url": f"{PUBLIC_URL}/webhook",
+            "url": f"{webhook_base}/webhook",
             "allowed_updates": ["message", "callback_query"],
             "drop_pending_updates": True,
         })
-        log.info(f"webhook → {PUBLIC_URL}/webhook ok={result.get('ok')}")
+        log.info(f"webhook → {webhook_base}/webhook ok={result.get('ok')} desc={result.get('description','')}")
     else:
-        log.warning(f"webhook not auto-registered (PUBLIC_URL={PUBLIC_URL!r})")
+        log.warning("BOT_TOKEN not set — webhook not registered")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
