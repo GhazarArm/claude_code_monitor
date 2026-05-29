@@ -6,7 +6,10 @@ REPO_RAW="https://raw.githubusercontent.com/GhazarArm/claude_code_monitor/main"
 CLAUDE_DIR="$HOME/.claude"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "$PWD")"
 USE_LOCAL=false
-[[ -d "$SCRIPT_DIR/scripts" ]] && USE_LOCAL=true
+# Only treat as a local clone if the actual hook script is present — guards
+# against false positives when piped (curl | bash) from a dir that happens to
+# contain an unrelated scripts/ folder.
+[[ -f "$SCRIPT_DIR/scripts/telegram-permission.py" ]] && USE_LOCAL=true
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 GRN='\033[0;32m'; YLW='\033[1;33m'; BLU='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
