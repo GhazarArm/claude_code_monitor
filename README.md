@@ -1,129 +1,164 @@
-# Claude Code → Telegram Hook
+# Claude Code Monitor
 
-> Interactive permission prompts via native dialog + Telegram — simultaneously. First response wins.
+> Permission prompts from Claude Code — in your macOS dialog **and** Telegram simultaneously. First tap wins.
 
----
-
-## 🎯 What it does
-
-- 🔐 Every dangerous Bash command (`rm -rf`, `git push --force`, `git reset --hard`, etc.) triggers a **native dialog + Telegram message** at the same time
-- 📁 Every file access outside your current project triggers **Allow / Allow always / Deny**
-- ⚡ **First response wins** — dialog click OR Telegram tap — Claude continues instantly
-- 🔇 **Mute prompts** for 30m / 2h / 1d when you want uninterrupted work
-- 📊 `/sessions` command shows all open Claude Code sessions with live status
-- ✅ Everything else **auto-approves silently**
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template)
 
 ---
 
-## 📋 Requirements
+## What it does
 
-| Requirement | Version |
-|-------------|---------|
-| Python | 3.8+ |
-| curl | any recent version |
-| macOS | 12+ (for native dialog) |
-| Linux | any distro with `zenity` |
-| Claude Code CLI | latest |
+Every time Claude Code tries to run something potentially destructive, you get asked in **two places at once**:
 
----
+- 🖥 A native macOS dialog pops up on your screen
+- 📱 A Telegram message with inline buttons arrives on your phone
 
-## 🚀 Quick Install
+Tap **Allow** or **Deny** from either — the first response wins, Claude continues (or stops) instantly.
 
-```bash
-git clone https://github.com/YOUR_USERNAME/claude-telegram-hook.git
-cd claude-telegram-hook
-./install.sh
+```
+Claude: "I'll run rm -rf ./build"
+
+  ┌─── macOS ──────────────────────┐    ┌─── Telegram ──────────────────┐
+  │  ⚠️ Dangerous Bash             │    │  ⚠️ Permission Request  14:32  │
+  │  rm -rf ./build                │    │  📁 Project: picsart-android   │
+  │                                │    │  🏷 Type: Recursive delete     │
+  │  [Deny] [Mute 30m] [Allow]     │    │                                │
+  └────────────────────────────────┘    │  rm -rf ./build                │
+                                        │  [✅ Allow] [❌ Deny]           │
+                                        │  [🔕 Mute 30m] [🔕 Mute 2h]   │
+                                        └────────────────────────────────┘
 ```
 
-The installer will prompt you for your **Bot Token** and **Chat ID**.
+---
 
-> **Getting your Chat ID:** Send any message to your bot, then run:
-> ```bash
-> curl -s "https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates" \
->   | python3 -c "import sys,json; u=json.load(sys.stdin)['result']; print(u[-1]['message']['chat']['id'])"
-> ```
+## Quick start for users
+
+**1.** Message the bot on Telegram: [@YourBotName](https://t.me/) → send `/start`
+
+You'll get your personal credentials:
+```
+Chat ID   1164900113
+Token     83c4c64a9e65e1434a62254e978e1972
+Relay URL https://claudecodemonitor-production.up.railway.app
+```
+
+**2.** Run the one-line installer on your machine:
+```bash
+git clone https://github.com/GhazarArm/claude_code_monitor
+cd claude_code_monitor
+./install.sh \
+  --relay https://claudecodemonitor-production.up.railway.app \
+  --chat-id YOUR_CHAT_ID \
+  --token YOUR_TOKEN
+```
+
+Done. Open Claude Code and try a dangerous command — the prompt appears.
 
 ---
 
-## 🔍 What triggers a prompt
+## What triggers a prompt
 
-| Tool | Condition | Prompt type |
-|------|-----------|-------------|
-| `Bash` | `rm -rf`, `git push --force`, `git reset --hard`, `chmod`, `sudo`, `curl \| bash` | Allow / Deny |
+| Tool | Condition | Buttons |
+|------|-----------|---------|
+| `Bash` | `rm -rf`, `git push --force`, `git reset --hard`, `mkfs`, `dd of=/dev/…` | Allow / Deny / Mute 30m / Mute 2h |
 | `Read` | File outside current project directory | Allow / Allow always / Deny |
 | `Write` | File outside current project directory | Allow / Allow always / Deny |
 | `Edit` | File outside current project directory | Allow / Allow always / Deny |
-| `Bash` | Any command when muted | Silent auto-approve |
 | Everything else | — | Silent auto-approve |
 
 ---
 
-## 🤖 Bot commands
+## Bot commands
 
 | Command | Effect |
 |---------|--------|
-| `/mute 30m` | Silence all prompts for 30 minutes |
-| `/mute 2h` | Silence all prompts for 2 hours |
-| `/mute 1d` | Silence all prompts for 1 day |
+| `/start` | Get your installation credentials |
+| `/mute` | Pause prompts for 30 minutes |
+| `/mute 2h` | Pause for 2 hours |
+| `/mute 1d` | Pause for 1 day |
 | `/unmute` | Re-enable prompts immediately |
-| `/status` | Show current mute status and active sessions |
-| `/sessions` | List all open Claude Code sessions with live status |
-| `/help` | Show all available commands |
+| `/status` | Show current mute state |
+| `/help` | List all commands |
 
 ---
 
-## 🏗 How it works
+## How it works
 
 ```
 Claude Code
+    │ PreToolUse hook (every tool call)
+    ▼
+telegram-permission.py
     │
-    ├── PreToolUse hook ──► session-tracker.py   (registers session)
-    │                  └──► telegram-permission.py (intercepts dangerous ops)
-    │                            │
-    │                            ├──► macOS osascript dialog  ┐
-    │                            └──► Telegram inline buttons ┘ first click wins
-    │
-    ├── Stop hook ────────► telegram-notify.sh    (task complete notification)
-    │                  └──► session-tracker.py --stop
-    │
-    └── Notification hook ► telegram-notify.sh    (pass-through notifications)
-
-telegram-bot-listener.py  (long-polls Telegram, routes /commands and button callbacks)
-    └── runs as LaunchAgent (macOS) or systemd user service (Linux)
+    ├──► osascript dialog (macOS) ─────────────────────┐
+    │                                                   │ first
+    └──► POST /v1/prompt ──► Relay Server               │ wins
+              │                    │                    │
+              │              Telegram Bot               │
+              │                    │                    │
+              │              Your phone ── tap ─────────┘
+              │
+              └── GET /v1/wait/{req_id} ◄── blocks until tap
+                        │
+                        └── returns decision → Claude unblocks
 ```
 
-- `telegram-permission.py` — PreToolUse hook. Checks if the tool/command needs approval, fires both dialog and Telegram in parallel, blocks until one responds.
-- `telegram-bot-listener.py` — Background daemon. Long-polls the Telegram Bot API, handles `/commands` and inline keyboard callbacks (Allow/Deny buttons).
-- `session-tracker.py` — Tracks open Claude Code sessions in `sessions.json` for the `/sessions` command.
-- `telegram-notify.sh` — Sends Stop/Notification events to Telegram.
+The relay server is a FastAPI app running on Railway. It:
+- Owns the Telegram bot (via webhook)
+- Queues pending prompts per user
+- Routes button taps back to the waiting hook process
+- Handles `/mute`, `/unmute`, `/status` commands
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical deep-dive.
 
 ---
 
-## 🔇 Muting
+## Deploying your own relay server
 
-When you need uninterrupted work, mute prompts directly from Telegram:
+You only need to do this once. Your friends use your server — no setup on their end beyond running the installer.
 
-```
-/mute 30m   → no prompts for 30 minutes (all auto-approved)
-/mute 2h    → no prompts for 2 hours
-/mute 1d    → no prompts for 1 day
-/unmute     → restore prompts immediately
-```
+**1.** Fork this repo
 
-Mute state is stored in `~/.claude/telegram-mute.json` and respected by all running Claude Code sessions simultaneously.
+**2.** Create a Telegram bot via [@BotFather](https://t.me/botfather) → `/newbot` → copy the token
+
+**3.** Deploy to Railway:
+- New project → connect your fork
+- Set environment variables:
+  ```
+  BOT_TOKEN     = <from BotFather>
+  SERVER_SECRET = <any random string, e.g. openssl rand -hex 32>
+  ```
+- Deploy — Railway auto-detects `requirements.txt` and `railway.toml`
+
+**4.** On startup the server registers its Telegram webhook automatically.
+
+**5.** Send `/start` to your bot — it should reply with credentials.
+
+**6.** Share the bot link with friends. They run the installer, enter their credentials, and it works.
 
 ---
 
-## 🗑 Uninstall
+## Requirements
+
+| | Version |
+|-|---------|
+| Python | 3.8+ |
+| macOS | 12+ (for native dialog) |
+| Linux | any distro (uses `zenity` for dialog) |
+| Claude Code CLI | latest |
+
+---
+
+## Uninstall
 
 ```bash
 ./uninstall.sh
 ```
 
-This removes the LaunchAgent/systemd service, all scripts from `~/.claude/`, and cleans the hooks from `~/.claude/settings.json`.
+Removes the hook scripts, cleans `~/.claude/settings.json`, and stops any background daemons.
 
 ---
 
-## 📄 License
+## License
 
-MIT — see [LICENSE](LICENSE).
+MIT
