@@ -230,6 +230,24 @@ async def check_muted(chat_id: str, token: str):
 async def health():
     return {"ok": True, "pending_prompts": len(pending)}
 
+@app.get("/debug/webhook")
+async def debug_webhook():
+    """Check current Telegram webhook status (safe — doesn't expose the token)."""
+    if not BOT_TOKEN:
+        return {"error": "BOT_TOKEN not set"}
+    info = await tg_async("getWebhookInfo", {})
+    result = info.get("result", {})
+    return {
+        "webhook_url": result.get("url", ""),
+        "has_custom_certificate": result.get("has_custom_certificate", False),
+        "pending_update_count": result.get("pending_update_count", 0),
+        "last_error_message": result.get("last_error_message", ""),
+        "last_error_date": result.get("last_error_date", 0),
+        "max_connections": result.get("max_connections", 0),
+        "bot_token_set": bool(BOT_TOKEN),
+        "public_url": PUBLIC_URL or "(fallback)",
+    }
+
 @app.on_event("startup")
 async def on_startup():
     # Use configured URL or fall back to the known Railway URL
