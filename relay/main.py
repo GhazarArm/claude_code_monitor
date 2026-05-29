@@ -25,6 +25,14 @@ pending:    dict = {}   # req_id → asyncio.Queue
 mute_state: dict = {}   # chat_id → {muted, until}
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
 
+# Latest script version — read from the repo's VERSION file (same commit that
+# was deployed). Hooks compare against this to know when to self-update.
+try:
+    with open(os.path.join(os.path.dirname(__file__), "..", "VERSION")) as _vf:
+        LATEST_VERSION = int(_vf.read().strip())
+except Exception:
+    LATEST_VERSION = 0
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 def make_token(chat_id: str) -> str:
     return hmac.new(SERVER_SECRET.encode(), str(chat_id).encode(),
@@ -118,10 +126,21 @@ async def handle_update(update: dict):
                     f"Then start a fresh Claude Code session."
                 ))
 
+            elif text.startswith("/update"):
+                await send_msg(chat_id, (
+                    f"⬆️ <b>Auto-update is on</b>\n\n"
+                    f"Latest version: <b>v{LATEST_VERSION}</b>\n\n"
+                    f"Your machine updates itself automatically — no copy-paste. "
+                    f"The update applies on your next Claude Code action (within the "
+                    f"hour, or immediately on your next permission prompt).\n\n"
+                    f"If something looks broken, use /reconnect for a manual reinstall."
+                ))
+
             elif text in ("/help", "help"):
                 await send_msg(chat_id, (
                     "🤖 <b>Claude Code Monitor</b>\n\n"
-                    "/reconnect — re-send the install command (restore/update setup)\n"
+                    "/update — check/apply the latest version (automatic)\n"
+                    "/reconnect — re-send the install command (manual reinstall)\n"
                     "/mute — pause prompts for 30 min\n"
                     "/mute 2h — pause for 2 hours\n"
                     "/mute 1d — pause for 1 day\n"
@@ -244,17 +263,21 @@ async def check_muted(chat_id: str, token: str):
     if not verify_token(chat_id, token):
         raise HTTPException(403, "Invalid token")
     state = mute_state.get(chat_id, {})
-    if not state.get("muted"):
-        return {"muted": False}
+    muted = bool(state.get("muted"))
     until = state.get("until", 0)
-    if until and time.time() > until:
+    if muted and until and time.time() > until:
         mute_state[chat_id] = {"muted": False, "until": 0}
-        return {"muted": False}
-    return {"muted": True, "until": until}
+        muted, until = False, 0
+    # "latest" lets the hook self-update immediately on its next prompt.
+    return {"muted": muted, "until": until, "latest": LATEST_VERSION}
+
+@app.get("/v1/version")
+async def version():
+    return {"latest": LATEST_VERSION}
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "pending_prompts": len(pending)}
+    return {"ok": True, "pending_prompts": len(pending), "version": LATEST_VERSION}
 
 @app.get("/debug/webhook")
 async def debug_webhook():

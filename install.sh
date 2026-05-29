@@ -141,6 +141,13 @@ for f in telegram-permission.py telegram-bot-listener.py session-tracker.py; do
 done
 copy_file "telegram-notify.sh"
 chmod +x "$CLAUDE_DIR/telegram-notify.sh"
+
+# Record installed version so the hook's self-updater knows the baseline
+if [[ "$USE_LOCAL" == "true" && -f "$SCRIPT_DIR/VERSION" ]]; then
+    cp "$SCRIPT_DIR/VERSION" "$CLAUDE_DIR/telegram-version"
+else
+    curl -fsSL "$REPO_RAW/VERSION" -o "$CLAUDE_DIR/telegram-version" 2>/dev/null || echo "0" > "$CLAUDE_DIR/telegram-version"
+fi
 success "Scripts installed"
 
 # ── Write credentials ─────────────────────────────────────────────────────────

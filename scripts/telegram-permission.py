@@ -46,6 +46,85 @@ except Exception as e:
 USE_RELAY = bool(RELAY_URL and RELAY_TOKEN and CHAT_ID)
 log(f"mode={'relay' if USE_RELAY else 'direct'} chat_id={CHAT_ID!r}")
 
+# ── Self-update ────────────────────────────────────────────────────────────────
+RAW_BASE          = "https://raw.githubusercontent.com/GhazarArm/claude_code_monitor/main"
+VERSION_FILE      = os.path.expanduser("~/.claude/telegram-version")
+UPDATE_CHECK_FILE = os.path.expanduser("~/.claude/telegram-update-check")
+UPDATE_THROTTLE   = 3600  # only hit the network for a version check once per hour
+UPDATE_SCRIPTS    = ["telegram-permission.py", "telegram-notify.sh",
+                     "session-tracker.py", "telegram-bot-listener.py"]
+
+def _read_int(path, default=0):
+    try:
+        with open(path) as f:
+            return int((f.read().strip() or "0"))
+    except Exception:
+        return default
+
+def _fetch(url, timeout=10):
+    req = urllib.request.Request(url, headers={"Cache-Control": "no-cache"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+def notify(text):
+    """Send a plain message (used for update notices)."""
+    if USE_RELAY:
+        relay_post("/v1/notify", {"chat_id": CHAT_ID, "token": RELAY_TOKEN, "text": text})
+    elif TOKEN and CHAT_ID:
+        tg("sendMessage", {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"})
+
+def self_update():
+    """Download the latest scripts from GitHub and replace local copies. Returns new version or None."""
+    claude_dir = os.path.expanduser("~/.claude")
+    try:
+        # GitHub raw is the source of truth. Cache-bust the version read so a
+        # fresh push is detected promptly despite the CDN's ~5min TTL.
+        latest = int(_fetch(f"{RAW_BASE}/VERSION?nc={int(time.time())}", timeout=5).decode().strip())
+    except Exception as e:
+        log(f"self_update: version fetch failed: {e}")
+        return None
+    if latest <= _read_int(VERSION_FILE, 0):
+        return None
+    try:
+        for name in UPDATE_SCRIPTS:
+            # Pin to ?v=latest so we never write version N with a stale (N-1) script.
+            content = _fetch(f"{RAW_BASE}/scripts/{name}?v={latest}")
+            fd, tmp = tempfile.mkstemp(dir=claude_dir, prefix=".upd-")
+            with os.fdopen(fd, "wb") as f:
+                f.write(content)
+            if name.endswith(".sh"):
+                os.chmod(tmp, 0o755)
+            os.replace(tmp, os.path.join(claude_dir, name))
+        with open(VERSION_FILE, "w") as f:
+            f.write(str(latest))
+        log(f"self_update → v{latest}")
+        notify(f"⬆️ <b>Claude Code Monitor updated to v{latest}</b>\n"
+               f"<i>The new version applies on your next action.</i>")
+        return latest
+    except Exception as e:
+        log(f"self_update error: {e}")
+        return None
+
+def maybe_self_update(force=False):
+    """Throttled version check + update. Never raises — must not block the permission flow."""
+    try:
+        now = time.time()
+        if not force:
+            try:
+                last = float((open(UPDATE_CHECK_FILE).read().strip() or "0"))
+            except Exception:
+                last = 0
+            if now - last < UPDATE_THROTTLE:
+                return
+        try:
+            with open(UPDATE_CHECK_FILE, "w") as f:   # record first, so errors don't hammer
+                f.write(str(now))
+        except Exception:
+            pass
+        self_update()
+    except Exception as e:
+        log(f"maybe_self_update error: {e}")
+
 # ── Mute ──────────────────────────────────────────────────────────────────────
 def is_muted():
     # Relay mode: check relay server for mute state
@@ -54,7 +133,13 @@ def is_muted():
             url = f"{RELAY_URL}/v1/muted/{CHAT_ID}?token={RELAY_TOKEN}"
             req = urllib.request.Request(url)
             with urllib.request.urlopen(req, timeout=5) as r:
-                return json.loads(r.read()).get("muted", False)
+                data = json.loads(r.read())
+            # Piggyback an instant update check: the relay reports the latest
+            # version, so an active prompt updates immediately if behind.
+            latest = data.get("latest")
+            if isinstance(latest, int) and latest > _read_int(VERSION_FILE, 0):
+                self_update()
+            return data.get("muted", False)
         except Exception as e:
             log(f"is_muted relay error: {e}")
     # Direct mode (or relay failed): read local file
@@ -396,6 +481,11 @@ tool_name  = data.get("tool_name", "")
 tool_input = data.get("tool_input", {})
 cwd        = os.environ.get("PWD", "")
 log(f"tool={tool_name!r}")
+
+# Routine background-ish self-update check (throttled to once/hour). Cheap when
+# throttled; only touches the network at most once per hour regardless of volume.
+if CHAT_ID:
+    maybe_self_update()
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  BASH — dangerous command check
