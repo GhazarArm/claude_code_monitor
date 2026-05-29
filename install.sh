@@ -4,7 +4,7 @@ set -euo pipefail
 
 REPO_RAW="https://raw.githubusercontent.com/GhazarArm/claude_code_monitor/main"
 CLAUDE_DIR="$HOME/.claude"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "$PWD")"
 USE_LOCAL=false
 [[ -d "$SCRIPT_DIR/scripts" ]] && USE_LOCAL=true
 

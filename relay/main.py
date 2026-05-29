@@ -91,20 +91,20 @@ async def handle_update(update: dict):
             token = make_token(chat_id)
             relay = PUBLIC_URL or "https://claudecodemonitor-production.up.railway.app"
             repo  = "https://github.com/GhazarArm/claude_code_monitor"
+            raw   = "https://raw.githubusercontent.com/GhazarArm/claude_code_monitor/main/install.sh"
 
             if text.startswith("/start"):
+                install_cmd = (
+                    f"curl -fsSL {raw} | bash -s -- "
+                    f"--relay {relay} --chat-id {chat_id} --token {token}"
+                )
                 await send_msg(chat_id, (
                     f"👋 <b>Claude Code Monitor</b>\n\n"
-                    f"Your installation credentials:\n\n"
-                    f"  <b>Chat ID</b>   <code>{chat_id}</code>\n"
-                    f"  <b>Token</b>     <code>{token}</code>\n"
-                    f"  <b>Relay URL</b> <code>{relay}</code>\n\n"
                     f"<b>Install on your machine:</b>\n"
-                    f"<pre>git clone {repo}\ncd claude_code_monitor\n"
-                    f"./install.sh \\\n"
-                    f"  --relay {relay} \\\n"
-                    f"  --chat-id {chat_id} \\\n"
-                    f"  --token {token}</pre>\n\n"
+                    f"Copy this one command and paste it into your terminal — "
+                    f"your credentials are already filled in.\n\n"
+                    f"<pre>{install_cmd}</pre>\n\n"
+                    f"That's it. Open Claude Code and try a dangerous command.\n\n"
                     f"Send /help for available commands."
                 ))
 
