@@ -93,11 +93,12 @@ async def handle_update(update: dict):
             repo  = "https://github.com/GhazarArm/claude_code_monitor"
             raw   = "https://raw.githubusercontent.com/GhazarArm/claude_code_monitor/main/install.sh"
 
+            install_cmd = (
+                f"curl -fsSL {raw} | bash -s -- "
+                f"--relay {relay} --chat-id {chat_id} --token {token}"
+            )
+
             if text.startswith("/start"):
-                install_cmd = (
-                    f"curl -fsSL {raw} | bash -s -- "
-                    f"--relay {relay} --chat-id {chat_id} --token {token}"
-                )
                 await send_msg(chat_id, (
                     f"👋 <b>Claude Code Monitor</b>\n\n"
                     f"<b>Install on your machine:</b>\n"
@@ -108,9 +109,19 @@ async def handle_update(update: dict):
                     f"Send /help for available commands."
                 ))
 
+            elif text.startswith("/reconnect"):
+                await send_msg(chat_id, (
+                    f"🔄 <b>Reconnect / Update</b>\n\n"
+                    f"Run this again to restore or update your setup — it re-downloads "
+                    f"the latest scripts and rewrites your config:\n\n"
+                    f"<pre>{install_cmd}</pre>\n\n"
+                    f"Then start a fresh Claude Code session."
+                ))
+
             elif text in ("/help", "help"):
                 await send_msg(chat_id, (
                     "🤖 <b>Claude Code Monitor</b>\n\n"
+                    "/reconnect — re-send the install command (restore/update setup)\n"
                     "/mute — pause prompts for 30 min\n"
                     "/mute 2h — pause for 2 hours\n"
                     "/mute 1d — pause for 1 day\n"
