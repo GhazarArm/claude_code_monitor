@@ -1,0 +1,15 @@
+[Unit]
+Description=Claude Code Telegram Bot Listener
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=__PYTHON_PATH__ __CLAUDE_DIR__/telegram-bot-listener.py
+Restart=always
+RestartSec=10
+StandardOutput=append:__CLAUDE_DIR__/telegram-bot-listener.log
+StandardError=append:__CLAUDE_DIR__/telegram-bot-listener.log
+
+[Install]
+WantedBy=default.target
