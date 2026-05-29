@@ -15,12 +15,24 @@ source "$CONF"
 
 send() {
   local text="$1"
-  curl -s -X POST \
-    "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-    -d chat_id="${TELEGRAM_CHAT_ID}" \
-    -d parse_mode="HTML" \
-    -d text="$text" \
-    > /dev/null
+  # Relay mode (RELAY_URL + RELAY_TOKEN set) → send via the relay server.
+  # Direct mode → call the Telegram Bot API with the local bot token.
+  if [[ -n "${RELAY_URL:-}" && -n "${RELAY_TOKEN:-}" ]]; then
+    local payload
+    payload="$(python3 -c 'import json,sys; print(json.dumps({"chat_id":sys.argv[1],"token":sys.argv[2],"text":sys.argv[3]}))' \
+      "${TELEGRAM_CHAT_ID}" "${RELAY_TOKEN}" "$text")"
+    curl -s -X POST "${RELAY_URL}/v1/notify" \
+      -H "Content-Type: application/json" \
+      -d "$payload" \
+      > /dev/null
+  else
+    curl -s -X POST \
+      "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN:-}/sendMessage" \
+      -d chat_id="${TELEGRAM_CHAT_ID}" \
+      -d parse_mode="HTML" \
+      -d text="$text" \
+      > /dev/null
+  fi
 }
 
 truncate_text() {

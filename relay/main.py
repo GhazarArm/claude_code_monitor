@@ -213,6 +213,21 @@ async def edit_message(req: EditReq):
     await edit_msg(req.chat_id, req.msg_id, req.text)
     return {"ok": True}
 
+class NotifyReq(BaseModel):
+    chat_id: str
+    token:   str
+    text:    str
+
+@app.post("/v1/notify")
+async def notify(req: NotifyReq):
+    """Send a plain message (no buttons, no queue) — used by Stop/Notification hooks."""
+    if not verify_token(req.chat_id, req.token):
+        raise HTTPException(403, "Invalid token")
+    msg_id = await send_msg(req.chat_id, req.text)
+    if not msg_id:
+        raise HTTPException(502, "Failed to send Telegram message")
+    return {"msg_id": msg_id}
+
 @app.get("/v1/muted/{chat_id}")
 async def check_muted(chat_id: str, token: str):
     if not verify_token(chat_id, token):
