@@ -354,7 +354,9 @@ async def version():
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "pending_prompts": len(pending), "version": LATEST_VERSION}
+    total_sessions = sum(len(b) for b in sessions.values())
+    return {"ok": True, "pending_prompts": len(pending),
+            "sessions": total_sessions, "version": LATEST_VERSION}
 
 @app.get("/debug/webhook")
 async def debug_webhook():
