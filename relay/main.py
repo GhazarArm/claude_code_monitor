@@ -23,6 +23,8 @@ if PUBLIC_URL and not PUBLIC_URL.startswith("http"):
 BASE     = f"https://api.telegram.org/bot{BOT_TOKEN}"
 pending:    dict = {}   # req_id → asyncio.Queue
 mute_state: dict = {}   # chat_id → {muted, until}
+sessions:   dict = {}   # chat_id → {session_id → {project, last_tool, last_cmd, last_active, started_at, idle}}
+SESSION_PRUNE_SECS = 3600   # forget sessions with no heartbeat for an hour
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
 
 # Latest script version — read from the repo's VERSION file (same commit that
@@ -88,6 +90,44 @@ def fmt_duration(secs: int) -> str:
         return f"{h}h {m}m" if m else f"{h}h"
     return f"{secs // 60}m"
 
+def ago(secs: float) -> str:
+    secs = int(secs)
+    if secs < 60:   return f"{secs}s"
+    if secs < 3600: return f"{secs // 60}m"
+    if secs < 86400: return f"{secs // 3600}h"
+    return f"{secs // 86400}d"
+
+# ── Sessions ──────────────────────────────────────────────────────────────────
+def _esc(s: str) -> str:
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+def render_sessions(chat_id: str) -> str:
+    now    = time.time()
+    bucket = sessions.get(chat_id, {})
+    # prune stale, then list newest-active first
+    for sid in [s for s, v in bucket.items() if now - v.get("last_active", 0) > SESSION_PRUNE_SECS]:
+        bucket.pop(sid, None)
+    if not bucket:
+        return ("🖥 <b>No active sessions</b>\n\n"
+                "<i>Sessions appear here while Claude Code is running and using tools.</i>")
+    items = sorted(bucket.values(), key=lambda v: v.get("last_active", 0), reverse=True)
+    lines = [f"🖥 <b>Claude Code sessions ({len(items)})</b>\n"]
+    for i, s in enumerate(items, 1):
+        idle_for = now - s.get("last_active", now)
+        active   = (not s.get("idle")) and idle_for < 120
+        dot      = "🟢" if active else "🟡"
+        state    = "active" if active else "idle"
+        project  = _esc(s.get("project") or "unknown")
+        up       = fmt_duration(int(now - s.get("started_at", now)))
+        action   = ""
+        if s.get("last_tool"):
+            detail = f": {_esc(s['last_cmd'])}" if s.get("last_cmd") else ""
+            action = f"\n   <code>{_esc(s['last_tool'])}{detail}</code>"
+        lines.append(
+            f"{i}. {dot} <b>{project}</b> · {state} {ago(idle_for)} ago · up {up}{action}"
+        )
+    return "\n".join(lines)
+
 # ── Update handler (runs in background, after webhook returns 200) ────────────
 async def handle_update(update: dict):
     try:
@@ -139,6 +179,7 @@ async def handle_update(update: dict):
             elif text in ("/help", "help"):
                 await send_msg(chat_id, (
                     "🤖 <b>Claude Code Monitor</b>\n\n"
+                    "/sessions — show your active Claude Code sessions\n"
                     "/update — check/apply the latest version (automatic)\n"
                     "/reconnect — re-send the install command (manual reinstall)\n"
                     "/mute — pause prompts for 30 min\n"
@@ -171,6 +212,9 @@ async def handle_update(update: dict):
                     await send_msg(chat_id, f"🔕 <b>Muted</b> until {exp} ({fmt_duration(rem)} remaining)")
                 else:
                     await send_msg(chat_id, "🔔 <b>Active</b> — permission prompts are enabled.")
+
+            elif text in ("/sessions", "sessions"):
+                await send_msg(chat_id, render_sessions(chat_id))
 
         # Callback query (button tap)
         cb    = update.get("callback_query", {})
@@ -257,6 +301,39 @@ async def notify(req: NotifyReq):
     if not msg_id:
         raise HTTPException(502, "Failed to send Telegram message")
     return {"msg_id": msg_id}
+
+class HeartbeatReq(BaseModel):
+    chat_id:    str
+    token:      str
+    session_id: str
+    project:    str   = ""
+    cwd:        str   = ""
+    last_tool:  str   = ""
+    last_cmd:   str   = ""
+    started_at: float = 0
+    stopped:    bool  = False
+
+@app.post("/v1/heartbeat")
+async def heartbeat(req: HeartbeatReq):
+    """Record a session heartbeat so /sessions can list active Claude Code sessions."""
+    if not verify_token(req.chat_id, req.token):
+        raise HTTPException(403, "Invalid token")
+    now    = time.time()
+    bucket = sessions.setdefault(req.chat_id, {})
+    prev   = bucket.get(req.session_id, {})
+    bucket[req.session_id] = {
+        "project":     req.project or prev.get("project", "unknown"),
+        "cwd":         req.cwd or prev.get("cwd", ""),
+        "last_tool":   req.last_tool or prev.get("last_tool", ""),
+        "last_cmd":    req.last_cmd if req.last_cmd else prev.get("last_cmd", ""),
+        "last_active": now,
+        "started_at":  prev.get("started_at") or req.started_at or now,
+        "idle":        req.stopped,
+    }
+    # prune stale across all this user's sessions
+    for sid in [s for s, v in bucket.items() if now - v.get("last_active", 0) > SESSION_PRUNE_SECS]:
+        bucket.pop(sid, None)
+    return {"ok": True}
 
 @app.get("/v1/muted/{chat_id}")
 async def check_muted(chat_id: str, token: str):

@@ -1,14 +1,59 @@
 #!/usr/bin/env python3
 """
-Claude Code — Session Tracker (PreToolUse hook, all tools)
-Writes a lightweight heartbeat to ~/.claude/sessions.json on every tool use.
-Fast: no network calls, pure file I/O.
+Claude Code — Session Tracker (PreToolUse + Stop hook, all tools)
+Writes a lightweight heartbeat to ~/.claude/sessions.json on every tool use,
+and pushes a throttled heartbeat to the relay so the /sessions bot command can
+list active sessions. Local write is pure file I/O; the relay push is
+best-effort, throttled, and never blocks Claude.
 """
-import sys, json, os, time, tempfile
+import sys, json, os, time, tempfile, urllib.request
 
-SESSIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions.json")
-MAX_AGE_HOURS = 24   # prune sessions older than this
+CLAUDE_DIR    = os.path.dirname(os.path.abspath(__file__))
+SESSIONS_FILE = os.path.join(CLAUDE_DIR, "sessions.json")
+CONF          = os.path.join(CLAUDE_DIR, "telegram.conf")
+MAX_AGE_HOURS = 24    # prune sessions older than this
+PUSH_THROTTLE = 20    # seconds between relay pushes per session
 IS_STOP       = "--stop" in sys.argv
+
+# ── Credentials (relay mode only) ─────────────────────────────────────────────
+RELAY_URL = CHAT_ID = RELAY_TOKEN = None
+try:
+    with open(CONF) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("RELAY_URL="):
+                RELAY_URL = line.split("=", 1)[1].strip("\"'")
+            elif line.startswith("TELEGRAM_CHAT_ID="):
+                CHAT_ID = line.split("=", 1)[1].strip("\"'")
+            elif line.startswith("RELAY_TOKEN="):
+                RELAY_TOKEN = line.split("=", 1)[1].strip("\"'")
+except Exception:
+    pass
+USE_RELAY = bool(RELAY_URL and CHAT_ID and RELAY_TOKEN)
+
+def push_heartbeat(entry, session_id, stopped):
+    """Best-effort relay push — short timeout, never raises."""
+    if not USE_RELAY:
+        return
+    try:
+        payload = json.dumps({
+            "chat_id":    CHAT_ID,
+            "token":      RELAY_TOKEN,
+            "session_id": session_id,
+            "project":    entry.get("project", ""),
+            "cwd":        entry.get("cwd", ""),
+            "last_tool":  entry.get("last_tool", ""),
+            "last_cmd":   entry.get("last_cmd", ""),
+            "started_at": entry.get("started_at", 0),
+            "stopped":    stopped,
+        }).encode()
+        req = urllib.request.Request(
+            f"{RELAY_URL}/v1/heartbeat", data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=2).read()
+    except Exception:
+        pass
 
 try:
     raw  = sys.stdin.buffer.read()
@@ -48,7 +93,7 @@ try:
 
     # Update this session
     prev = sessions.get(session_id, {})
-    sessions[session_id] = {
+    entry = {
         "id":          session_id,
         "cwd":         cwd or prev.get("cwd", ""),
         "project":     project or prev.get("project", "unknown"),
@@ -57,7 +102,15 @@ try:
         "last_active": now,
         "started_at":  prev.get("started_at", now),
         "stopped_at":  now if IS_STOP else None,
+        "last_push":   prev.get("last_push", 0),
     }
+
+    # Decide whether to push to the relay this time (throttled, or always on stop)
+    should_push = IS_STOP or (now - entry["last_push"] >= PUSH_THROTTLE)
+    if should_push:
+        entry["last_push"] = now
+
+    sessions[session_id] = entry
 
     # Prune old/stale sessions (> MAX_AGE_HOURS since last activity)
     cutoff = now - MAX_AGE_HOURS * 3600
@@ -74,6 +127,10 @@ try:
     except Exception:
         try: os.unlink(tmp)
         except Exception: pass
+
+    # Relay push (after the local write so state is consistent)
+    if should_push:
+        push_heartbeat(entry, session_id, IS_STOP)
 
 except Exception:
     pass   # never crash, never block Claude
