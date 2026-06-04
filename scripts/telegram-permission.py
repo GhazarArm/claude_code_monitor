@@ -53,20 +53,16 @@ def popup_enabled():
     # Direct mode has no relay to read the preference from → always show popup.
     return bool(PREFS.get("popup", True)) if USE_RELAY else True
 
-def show_in_terminal(reason, detail):
-    """Popup-off mode: surface the pending request in the Claude terminal."""
-    msg = (f"\n🔐 Permission needed — {reason}\n"
-           f"   {str(detail)[:200]}\n"
-           f"   → Approve in Telegram (desktop popup is off)\n")
-    for sink in ("/dev/tty", None):
-        try:
-            if sink:
-                with open(sink, "w") as t:
-                    t.write(msg); t.flush()
-            else:
-                sys.stderr.write(msg); sys.stderr.flush()
-        except Exception:
-            pass
+def ask_in_chat(reason):
+    """Popup-off mode: defer to Claude Code's native in-chat permission prompt.
+    The user sees the request in the chat and picks Allow / Allow always / Deny."""
+    log(f"→ ASK (native chat prompt) — {reason}")
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "ask",
+        "permissionDecisionReason": reason,
+    }}))
+    sys.exit(0)
 
 # ── Self-update ────────────────────────────────────────────────────────────────
 RAW_BASE          = "https://raw.githubusercontent.com/GhazarArm/claude_code_monitor/main"
@@ -411,7 +407,7 @@ def ask_both(tg_title, detail, reason, tg_buttons, dialog_title, dialog_options)
         f"📁 <b>Project:</b> <code>{html.escape(project)}</code>\n"
         f"🏷 <b>Type:</b> <code>{html.escape(reason)}</code>\n\n"
         f"<pre>{html.escape(str(detail)[:400])}</pre>\n\n"
-        f"📲 <i>{'Reply here or click the macOS dialog' if popup_enabled() else 'Reply here to allow or deny'}</i>"
+        f"📲 <i>Reply here or click the macOS dialog</i>"
     )
 
     result_holder = [None]
@@ -459,24 +455,12 @@ def ask_both(tg_title, detail, reason, tg_buttons, dialog_title, dialog_options)
             daemon=True,
         )
 
-    show_dialog = popup_enabled()
-    # Safety net: if popup is off but Telegram couldn't be reached, fall back to
-    # the dialog so the user is never left with no way to answer.
-    if not show_dialog and USE_RELAY and not msg_id:
-        log("popup off but relay prompt failed — falling back to dialog")
-        show_dialog = True
-
-    if show_dialog:
-        t_dialog = threading.Thread(
-            target=macos_dialog_worker,
-            args=(dialog_title, detail, dialog_options, result_holder, done_event, proc_holder),
-            daemon=True,
-        )
-        t_dialog.start()
-    else:
-        log("popup off — Telegram only; surfacing request in terminal")
-        show_in_terminal(reason, detail)
-
+    t_dialog = threading.Thread(
+        target=macos_dialog_worker,
+        args=(dialog_title, detail, dialog_options, result_holder, done_event, proc_holder),
+        daemon=True,
+    )
+    t_dialog.start()
     t_tg.start()
 
     done_event.wait()   # forever
@@ -538,6 +522,10 @@ if tool_name == "Bash":
     if is_muted():
         log("muted → auto-approve")
         approve()
+
+    # Popup off → decide in the Claude chat (native prompt), no dialog/Telegram
+    if not popup_enabled():
+        ask_in_chat(f"Dangerous command — {reason}")
 
     cmd_preview = command.strip()
     if len(cmd_preview) > 500: cmd_preview = cmd_preview[:500] + "\n..."
@@ -609,6 +597,10 @@ if tool_name in ("Read", "Write", "Edit", "MultiEdit"):
     if is_muted():
         log("muted → auto-approve")
         approve()
+
+    # Popup off → decide in the Claude chat (native prompt), no dialog/Telegram
+    if not popup_enabled():
+        ask_in_chat(f"{tool_name} outside project — {file_path}")
 
     if os.path.isdir(file_path):
         allowlist_entry = f"{tool_name}({file_path}/**)"

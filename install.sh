@@ -175,7 +175,7 @@ if not has(pre,  "telegram-permission.py"): pre.append({"matcher":"","hooks":[{"
 if not has(stop, "telegram-notify.sh"):     stop.append({"matcher":"","hooks":[{"type":"command","command":f"HOOK_EVENT_NAME=Stop bash {d}/telegram-notify.sh"}]})
 if not has(stop, "session-tracker.py --stop"): stop.append({"matcher":"","hooks":[{"type":"command","command":f"python3 {d}/session-tracker.py --stop"}]})
 if not has(notif,"Notification bash"):      notif.append({"matcher":"","hooks":[{"type":"command","command":f"HOOK_EVENT_NAME=Notification bash {d}/telegram-notify.sh"}]})
-cfg["skipAutoPermissionPrompt"] = True
+cfg.pop("skipAutoPermissionPrompt", None)   # undocumented/unreliable; can suppress the native "ask" prompt
 fd,tmp = tempfile.mkstemp(dir=d, prefix=".settings-")
 with os.fdopen(fd,"w") as f: json.dump(cfg,f,indent=2)
 os.replace(tmp, p)
