@@ -23,6 +23,7 @@ if PUBLIC_URL and not PUBLIC_URL.startswith("http"):
 BASE     = f"https://api.telegram.org/bot{BOT_TOKEN}"
 pending:    dict = {}   # req_id → asyncio.Queue
 mute_state: dict = {}   # chat_id → {muted, until}
+popup_pref: dict = {}   # chat_id → bool (show macOS popup); default True
 sessions:   dict = {}   # chat_id → {session_id → {project, last_tool, last_cmd, last_active, started_at, idle}}
 SESSION_PRUNE_SECS = 3600   # forget sessions with no heartbeat for an hour
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
@@ -180,6 +181,7 @@ async def handle_update(update: dict):
                 await send_msg(chat_id, (
                     "🤖 <b>Claude Code Monitor</b>\n\n"
                     "/sessions — show your active Claude Code sessions\n"
+                    "/popup on|off — desktop dialog, or Telegram-only\n"
                     "/update — check/apply the latest version (automatic)\n"
                     "/reconnect — re-send the install command (manual reinstall)\n"
                     "/mute — pause prompts for 30 min\n"
@@ -215,6 +217,25 @@ async def handle_update(update: dict):
 
             elif text in ("/sessions", "sessions"):
                 await send_msg(chat_id, render_sessions(chat_id))
+
+            elif text.startswith("/popup"):
+                parts = text.split()
+                if len(parts) >= 2 and parts[1].lower() in ("on", "off"):
+                    popup_pref[chat_id] = (parts[1].lower() == "on")
+                    if popup_pref[chat_id]:
+                        await send_msg(chat_id,
+                            "🖥 <b>Popup ON</b>\n\nDangerous actions show a desktop dialog "
+                            "<b>and</b> a Telegram message — first response wins.")
+                    else:
+                        await send_msg(chat_id,
+                            "📱 <b>Popup OFF</b>\n\nNo desktop dialog. The request is shown in "
+                            "your Claude terminal and sent here — approve from Telegram.")
+                else:
+                    cur = "ON" if popup_pref.get(chat_id, True) else "OFF"
+                    await send_msg(chat_id,
+                        f"🖥 <b>Popup is {cur}</b>\n\n"
+                        f"/popup on — desktop dialog + Telegram\n"
+                        f"/popup off — Telegram only (terminal shows the request)")
 
         # Callback query (button tap)
         cb    = update.get("callback_query", {})
@@ -345,8 +366,9 @@ async def check_muted(chat_id: str, token: str):
     if muted and until and time.time() > until:
         mute_state[chat_id] = {"muted": False, "until": 0}
         muted, until = False, 0
-    # "latest" lets the hook self-update immediately on its next prompt.
-    return {"muted": muted, "until": until, "latest": LATEST_VERSION}
+    # "latest" lets the hook self-update; "popup" controls the local dialog.
+    return {"muted": muted, "until": until, "latest": LATEST_VERSION,
+            "popup": popup_pref.get(chat_id, True)}
 
 @app.get("/v1/version")
 async def version():

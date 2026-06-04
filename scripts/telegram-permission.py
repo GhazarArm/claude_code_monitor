@@ -46,6 +46,28 @@ except Exception as e:
 USE_RELAY = bool(RELAY_URL and RELAY_TOKEN and CHAT_ID)
 log(f"mode={'relay' if USE_RELAY else 'direct'} chat_id={CHAT_ID!r}")
 
+# ── User preferences (populated from the relay mute-check response) ─────────────
+PREFS = {"popup": True}
+
+def popup_enabled():
+    # Direct mode has no relay to read the preference from → always show popup.
+    return bool(PREFS.get("popup", True)) if USE_RELAY else True
+
+def show_in_terminal(reason, detail):
+    """Popup-off mode: surface the pending request in the Claude terminal."""
+    msg = (f"\n🔐 Permission needed — {reason}\n"
+           f"   {str(detail)[:200]}\n"
+           f"   → Approve in Telegram (desktop popup is off)\n")
+    for sink in ("/dev/tty", None):
+        try:
+            if sink:
+                with open(sink, "w") as t:
+                    t.write(msg); t.flush()
+            else:
+                sys.stderr.write(msg); sys.stderr.flush()
+        except Exception:
+            pass
+
 # ── Self-update ────────────────────────────────────────────────────────────────
 RAW_BASE          = "https://raw.githubusercontent.com/GhazarArm/claude_code_monitor/main"
 VERSION_FILE      = os.path.expanduser("~/.claude/telegram-version")
@@ -134,6 +156,9 @@ def is_muted():
             req = urllib.request.Request(url)
             with urllib.request.urlopen(req, timeout=5) as r:
                 data = json.loads(r.read())
+            # Capture the user's popup preference for ask_both().
+            if "popup" in data:
+                PREFS["popup"] = bool(data["popup"])
             # Piggyback an instant update check: the relay reports the latest
             # version, so an active prompt updates immediately if behind.
             latest = data.get("latest")
@@ -386,7 +411,7 @@ def ask_both(tg_title, detail, reason, tg_buttons, dialog_title, dialog_options)
         f"📁 <b>Project:</b> <code>{html.escape(project)}</code>\n"
         f"🏷 <b>Type:</b> <code>{html.escape(reason)}</code>\n\n"
         f"<pre>{html.escape(str(detail)[:400])}</pre>\n\n"
-        f"📲 <i>Reply here or click the macOS dialog</i>"
+        f"📲 <i>{'Reply here or click the macOS dialog' if popup_enabled() else 'Reply here to allow or deny'}</i>"
     )
 
     result_holder = [None]
@@ -434,12 +459,24 @@ def ask_both(tg_title, detail, reason, tg_buttons, dialog_title, dialog_options)
             daemon=True,
         )
 
-    t_dialog = threading.Thread(
-        target=macos_dialog_worker,
-        args=(dialog_title, detail, dialog_options, result_holder, done_event, proc_holder),
-        daemon=True,
-    )
-    t_dialog.start()
+    show_dialog = popup_enabled()
+    # Safety net: if popup is off but Telegram couldn't be reached, fall back to
+    # the dialog so the user is never left with no way to answer.
+    if not show_dialog and USE_RELAY and not msg_id:
+        log("popup off but relay prompt failed — falling back to dialog")
+        show_dialog = True
+
+    if show_dialog:
+        t_dialog = threading.Thread(
+            target=macos_dialog_worker,
+            args=(dialog_title, detail, dialog_options, result_holder, done_event, proc_holder),
+            daemon=True,
+        )
+        t_dialog.start()
+    else:
+        log("popup off — Telegram only; surfacing request in terminal")
+        show_in_terminal(reason, detail)
+
     t_tg.start()
 
     done_event.wait()   # forever
