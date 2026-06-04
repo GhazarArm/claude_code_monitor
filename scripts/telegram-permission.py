@@ -18,6 +18,7 @@ CONF           = os.path.expanduser("~/.claude/telegram.conf")
 MUTE_FILE      = os.path.expanduser("~/.claude/telegram-mute.json")
 SETTINGS_LOCAL = os.path.expanduser("~/.claude/settings.local.json")
 POLL_LOCK      = os.path.expanduser("~/.claude/telegram-poll.lock")
+POPUP_FILE     = os.path.expanduser("~/.claude/telegram-popup")   # cached "1"/"0" popup pref
 
 def log(msg):
     with open(LOG, "a") as f:
@@ -52,6 +53,21 @@ PREFS = {"popup": True}
 def popup_enabled():
     # Direct mode has no relay to read the preference from → always show popup.
     return bool(PREFS.get("popup", True)) if USE_RELAY else True
+
+def read_popup_cache():
+    """Local fallback for the popup pref (survives relay restarts). Default: on."""
+    try:
+        with open(POPUP_FILE) as f:
+            return f.read().strip() != "0"
+    except Exception:
+        return True
+
+def write_popup_cache(enabled):
+    try:
+        with open(POPUP_FILE, "w") as f:
+            f.write("1" if enabled else "0")
+    except Exception:
+        pass
 
 def ask_in_chat(reason):
     """Popup-off mode: defer to Claude Code's native in-chat permission prompt.
@@ -145,6 +161,8 @@ def maybe_self_update(force=False):
 
 # ── Mute ──────────────────────────────────────────────────────────────────────
 def is_muted():
+    # Seed popup pref from the local cache; an explicit relay value overrides it.
+    PREFS["popup"] = read_popup_cache()
     # Relay mode: check relay server for mute state
     if USE_RELAY:
         try:
@@ -152,9 +170,11 @@ def is_muted():
             req = urllib.request.Request(url)
             with urllib.request.urlopen(req, timeout=5) as r:
                 data = json.loads(r.read())
-            # Capture the user's popup preference for ask_both().
-            if "popup" in data:
-                PREFS["popup"] = bool(data["popup"])
+            # Popup pref: relay returns a bool only if explicitly set (else None,
+            # so a relay restart can't reset it — we keep the cached value).
+            if isinstance(data.get("popup"), bool):
+                PREFS["popup"] = data["popup"]
+                write_popup_cache(data["popup"])
             # Piggyback an instant update check: the relay reports the latest
             # version, so an active prompt updates immediately if behind.
             latest = data.get("latest")

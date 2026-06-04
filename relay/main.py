@@ -367,8 +367,10 @@ async def check_muted(chat_id: str, token: str):
         mute_state[chat_id] = {"muted": False, "until": 0}
         muted, until = False, 0
     # "latest" lets the hook self-update; "popup" controls the local dialog.
+    # popup is None when never explicitly set → the hook falls back to its local
+    # cache, so a relay restart can't silently reset the user's choice.
     return {"muted": muted, "until": until, "latest": LATEST_VERSION,
-            "popup": popup_pref.get(chat_id, True)}
+            "popup": popup_pref.get(chat_id)}
 
 @app.get("/v1/version")
 async def version():
