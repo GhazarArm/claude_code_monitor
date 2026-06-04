@@ -398,6 +398,18 @@ async def debug_webhook():
         "public_url": PUBLIC_URL or "(fallback)",
     }
 
+BOT_COMMANDS = [
+    {"command": "start",     "description": "Get your install command"},
+    {"command": "sessions",  "description": "Show active Claude Code sessions"},
+    {"command": "popup",     "description": "Desktop dialog on/off (Telegram-only)"},
+    {"command": "mute",      "description": "Pause prompts (e.g. /mute 2h)"},
+    {"command": "unmute",    "description": "Re-enable prompts"},
+    {"command": "status",    "description": "Show mute state"},
+    {"command": "update",    "description": "Check/apply the latest version"},
+    {"command": "reconnect", "description": "Re-send the install command"},
+    {"command": "help",      "description": "List all commands"},
+]
+
 @app.on_event("startup")
 async def on_startup():
     # Use configured URL or fall back to the known Railway URL
@@ -409,6 +421,9 @@ async def on_startup():
             "drop_pending_updates": True,
         })
         log.info(f"webhook → {webhook_base}/webhook ok={result.get('ok')} desc={result.get('description','')}")
+        # Register the command menu so typing "/" shows suggestions
+        cmds = tg("setMyCommands", {"commands": BOT_COMMANDS})
+        log.info(f"setMyCommands ok={cmds.get('ok')}")
     else:
         log.warning("BOT_TOKEN not set — webhook not registered")
 
